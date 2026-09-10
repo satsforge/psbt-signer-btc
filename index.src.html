@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="es" data-theme="dark" data-mode="basic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<title>PSBT Signer BTC</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f7931a'/%3E%3Ctext x='16' y='23' font-family='Arial,sans-serif' font-size='20' font-weight='bold' fill='%231a1200' text-anchor='middle'%3E%E2%82%BF%3C/text%3E%3C/svg%3E">
+<style>__CSS__</style>
+</head>
+<body>
+<div class="app">
+
+<div class="topbar">
+  <div class="brand"><span class="coin">₿</span> <span data-i18n="topbar.brand">PSBT Signer BTC</span></div>
+  <div class="topbar-actions">
+    <span id="network-badge" class="badge badge-testnet">TESTNET</span>
+    <span class="mode-toggle-group">
+      <button class="mode-toggle" id="ui-mode-toggle" type="button" aria-pressed="false">
+        <span data-i18n="topbar.mode.prefix">Modo:</span> <strong id="ui-mode-label" data-i18n="topbar.mode.basic">Básico</strong>
+      </button>
+      <span class="tip" tabindex="0" data-i18n-tip="topbar.mode.tip" data-tip="">?</span>
+    </span>
+    <button class="theme-toggle" id="lang-toggle" type="button" data-i18n="topbar.lang.toEnglish">🌐 English</button>
+    <button class="theme-toggle" id="theme-toggle" type="button" data-i18n="topbar.theme.toLight">☀ Modo claro</button>
+  </div>
+</div>
+
+<main>
+
+<section id="screen-unlock" class="screen">
+  <div class="panel">
+  <div class="notice notice-warning" data-i18n="notice.warning">
+    <strong>Aviso:</strong> esta herramienta firma transacciones reales de Bitcoin, pero <strong>nunca transmite nada</strong> —
+    no hace ninguna llamada de red. Para máxima seguridad, usala en un equipo desconectado de internet.
+    Nadie ajeno a este proyecto auditó el código todavía: leelo antes de confiarle fondos.
+  </div>
+
+  <form id="unlock-form">
+    <fieldset class="network-choice">
+      <legend data-i18n="network.legend">Red</legend>
+      <label><input type="radio" name="network" id="network-testnet" checked> <span data-i18n="network.testnet.label">Testnet (recomendado para probar)</span></label>
+      <label><input type="radio" name="network" id="network-mainnet"> <span data-i18n="network.mainnet.label">Mainnet (Bitcoin real)</span></label>
+      <label id="mainnet-confirm-wrap" hidden class="mainnet-confirm">
+        <input type="checkbox" id="mainnet-confirm-checkbox">
+        <span data-i18n="network.mainnet.confirm">Entiendo que voy a operar con Bitcoin real y puedo perder mis fondos si me equivoco.</span>
+      </label>
+    </fieldset>
+
+    <div class="advanced-only">
+      <fieldset class="unlock-mode-choice">
+        <legend data-i18n="unlockMode.legend">Como desbloqueás la clave</legend>
+        <label><input type="radio" name="unlock-mode" id="mode-seed" checked> <span data-i18n="unlockMode.seed.label">Frase semilla (BIP39)</span></label>
+        <label><input type="radio" name="unlock-mode" id="mode-key"> <span data-i18n="unlockMode.key.label">Clave privada (WIF)</span></label>
+      </fieldset>
+
+      <p class="hint" data-i18n="fileLoad.hint">
+        "Cargar desde archivo" lee un .txt directo desde un pendrive con el diálogo
+        nativo del sistema operativo — el contenido nunca pasa por el portapapeles
+        (evita el historial de clipboard de apps de terceros y extensiones).
+      </p>
+    </div>
+
+    <div id="seed-fields">
+      <div class="advanced-only">
+        <label class="checkbox-field">
+          <input type="checkbox" id="seed-encrypted-checkbox">
+          <span data-i18n="seedEncrypted.checkbox">La frase está cifrada (bloque AES-256-GCM de paper-wallet-btc)</span>
+        </label>
+      </div>
+
+      <label class="field" id="mnemonic-field">
+        <span data-i18n="mnemonic.label">Frase semilla (12 o 24 palabras, BIP39)</span>
+        <textarea id="mnemonic-input" rows="3" autocomplete="off" spellcheck="false"></textarea>
+        <div class="advanced-only file-load-row">
+          <button type="button" class="btn-secondary" id="mnemonic-file-btn" data-i18n="fileLoad.button">📁 Cargar desde archivo (USB)</button>
+          <input type="file" id="mnemonic-file-input" accept=".txt,text/plain" hidden>
+        </div>
+      </label>
+
+      <div id="encrypted-seed-fields" class="advanced-only" hidden>
+        <label class="field">
+          <span data-i18n="encryptedSeed.label">Bloque cifrado (del PDF de paper-wallet-btc)</span>
+          <textarea id="encrypted-seed-input" rows="4" autocomplete="off" spellcheck="false"></textarea>
+          <div class="file-load-row">
+            <button type="button" class="btn-secondary" id="encrypted-seed-file-btn" data-i18n="fileLoad.button">📁 Cargar desde archivo (USB)</button>
+            <input type="file" id="encrypted-seed-file-input" accept=".txt,text/plain" hidden>
+          </div>
+        </label>
+        <label class="field">
+          <span data-i18n="decryptPassword.label">Contraseña de descifrado</span>
+          <input type="password" id="decrypt-password-input" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+
+      <label class="field">
+        <span data-i18n="passphrase.label">Passphrase BIP39 (opcional, "palabra 25")</span>
+        <div class="input-with-button">
+          <input type="password" id="passphrase-input" autocomplete="off" spellcheck="false">
+          <button type="button" id="toggle-passphrase-visibility">👁</button>
+        </div>
+      </label>
+    </div>
+
+    <div id="key-fields" class="advanced-only" hidden>
+      <label class="field">
+        <span data-i18n="wif.label">Clave privada (WIF, o clave BIP38 cifrada que empieza con "6P...")</span>
+        <input type="text" id="wif-input" autocomplete="off" spellcheck="false">
+        <div class="file-load-row">
+          <button type="button" class="btn-secondary" id="wif-file-btn" data-i18n="fileLoad.button">📁 Cargar desde archivo (USB)</button>
+          <input type="file" id="wif-file-input" accept=".txt,text/plain" hidden>
+        </div>
+      </label>
+      <label class="field">
+        <span data-i18n="wifPassphrase.label">Passphrase BIP38 (solo si la clave empieza con "6P...")</span>
+        <div class="input-with-button">
+          <input type="password" id="wif-passphrase-input" autocomplete="off" spellcheck="false">
+          <button type="button" id="toggle-wif-passphrase-visibility">👁</button>
+        </div>
+      </label>
+      <p class="hint" data-i18n="wif.hint">Se revisan los 4 formatos de dirección posibles para esta clave (Legacy, P2SH-SegWit, Native SegWit y Taproot).</p>
+    </div>
+
+    <p id="unlock-error" class="error" hidden></p>
+
+    <button type="submit" id="unlock-btn" class="btn-primary" data-i18n="unlock.button">Desbloquear clave</button>
+  </form>
+  </div>
+</section>
+
+<section id="screen-load" class="screen" hidden>
+  <div class="panel">
+  <h2 data-i18n="load.title">Cargar transacción (PSBT)</h2>
+  <p class="hint" data-i18n="load.hint">Pegá o cargá el PSBT sin firmar (o parcialmente firmado) que generó otra wallet — en formato base64 o hex.</p>
+
+  <form id="load-form">
+    <label class="field">
+      <span data-i18n="load.label">PSBT (base64 o hex)</span>
+      <textarea id="psbt-input" rows="6" autocomplete="off" spellcheck="false"></textarea>
+      <div class="file-load-row">
+        <button type="button" class="btn-secondary" id="psbt-file-btn" data-i18n="fileLoad.button">📁 Cargar desde archivo (USB)</button>
+        <input type="file" id="psbt-file-input" accept=".txt,text/plain,.psbt" hidden>
+      </div>
+    </label>
+
+    <p id="load-error" class="error" hidden></p>
+
+    <div class="actions-row">
+      <button type="submit" class="btn-primary" data-i18n="load.analyze">Analizar</button>
+      <button type="button" id="load-lock-btn" class="btn-secondary" data-i18n="load.lock">Bloquear</button>
+    </div>
+  </form>
+  </div>
+</section>
+
+<section id="screen-review" class="screen" hidden>
+  <div class="panel">
+  <h2 data-i18n="review.title">Revisar antes de firmar</h2>
+
+  <p class="will-sign-banner" id="review-will-sign"></p>
+
+  <dl class="review-list">
+    <dt data-i18n="review.inputsTotal">Total de entradas</dt><dd id="review-inputs-total"></dd>
+    <dt data-i18n="review.outputsTotal">Total de salidas</dt><dd id="review-outputs-total"></dd>
+    <dt data-i18n="review.fee">Comisión</dt><dd id="review-fee"></dd>
+  </dl>
+
+  <h2 data-i18n="review.outputs">Salidas</h2>
+  <ul class="output-list" id="review-outputs"></ul>
+
+  <label class="checkbox-field">
+    <input type="checkbox" id="review-confirm-checkbox">
+    <span data-i18n="review.confirm">Revisé el destino y los montos, y quiero firmar esta transacción con la clave que desbloqueé.</span>
+  </label>
+
+  <p id="review-error" class="error" hidden></p>
+
+  <div class="actions-row">
+    <button id="confirm-sign-btn" class="btn-primary" disabled data-i18n="review.sign">Firmar</button>
+    <button id="cancel-review-btn" class="btn-secondary" data-i18n="review.cancel">Cancelar</button>
+  </div>
+  </div>
+</section>
+
+<section id="screen-result" class="screen" hidden>
+  <div class="panel">
+  <h2 id="result-title" data-i18n="result.title.finalized">Transacción firmada y completa</h2>
+  <p id="result-hint" class="hint" data-i18n="result.finalized.hint">Todas las firmas necesarias están presentes.</p>
+
+  <dl class="review-list" id="result-txid-row" hidden>
+    <dt data-i18n="result.txid">TXID</dt><dd id="result-txid" class="mono"></dd>
+  </dl>
+
+  <label class="field">
+    <span id="result-output-label" data-i18n="result.hexLabel">Transacción firmada (hex)</span>
+    <textarea id="result-output" class="mono" rows="6" readonly></textarea>
+  </label>
+
+  <div class="qr-wrap">
+    <img id="result-qr" alt="">
+  </div>
+
+  <div class="actions-row">
+    <button id="result-copy-btn" type="button" class="btn-secondary" data-i18n="result.copy">Copiar</button>
+    <button id="result-download-btn" type="button" class="btn-secondary" data-i18n="result.download">⬇ Descargar .txt</button>
+  </div>
+
+  <div class="actions-row">
+    <button id="result-back-btn" class="btn-primary" data-i18n="result.back">Firmar otro PSBT</button>
+    <button id="result-lock-btn" class="btn-secondary" data-i18n="result.lock">Bloquear</button>
+  </div>
+  </div>
+</section>
+
+</main>
+
+<p class="footer-note" data-i18n="footer.note">
+  Firma 100% en tu navegador · sin cookies · sin almacenamiento persistente · sin ninguna llamada de red.
+  Revisa el código fuente antes de confiarle fondos.
+</p>
+
+</div>
+<script>__SCRIPT__</script>
+</body>
+</html>

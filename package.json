@@ -1,0 +1,27 @@
+{
+  "name": "psbt-signer-btc",
+  "version": "1.0.0",
+  "description": "Firmador de PSBT 100% offline: firma transacciones Bitcoin sin conexion a internet, con semilla, semilla cifrada, WIF o clave BIP38",
+  "main": "index.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
