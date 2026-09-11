@@ -122,6 +122,43 @@ test('signs with a standalone imported key (WIF-style), checking all address enc
   assert.equal(result.finalized, true);
 });
 
+test('signs a taproot script-path input via tapBip32Derivation, for a leaf script this library does not recognize', () => {
+  // Mirrors Inheritance Vault BTC's real shape: key-path is some unrelated
+  // internal key, script-path is a single non-standard leaf
+  // (<N> CHECKSEQUENCEVERIFY DROP <pubkey> CHECKSIG). Neither the brute-force
+  // candidateMap (which only computes plain key-path-only p2tr scripts) nor
+  // the legacy bip32Derivation field can find this signer - only
+  // tapBip32Derivation plus allowUnknownInputs (both added for this) can.
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const root = rootFromSeed(seed.slice());
+  const heirNode = root.derive("m/86'/1'/0'/0/0");
+  const heirXOnly = heirNode.publicKey.slice(1, 33);
+  const csvBlocks = 5;
+  const leafScript = btc.Script.encode([csvBlocks, 'CHECKSEQUENCEVERIFY', 'DROP', heirXOnly, 'CHECKSIG']);
+  const vault = btc.p2tr(btc.TAPROOT_UNSPENDABLE_KEY, { script: leafScript }, network, true);
+  const funding = buildFundingTx(vault.script, 100_000n);
+
+  const tx = new btc.Transaction({ allowUnknownInputs: true });
+  tx.addInput({
+    txid: funding.id,
+    index: 0,
+    witnessUtxo: { amount: 100_000n, script: vault.script },
+    tapLeafScript: vault.tapLeafScript,
+    sequence: csvBlocks,
+    tapBip32Derivation: [[
+      heirXOnly,
+      { hashes: [vault.leaves[0].hash], der: { fingerprint: root.fingerprint, path: btc.bip32Path("m/86'/1'/0'/0/0") } },
+    ]],
+  });
+  tx.addOutputAddress(externalAddress(network), 98_000n, network);
+
+  const signed = signAll(tx, { candidateMap: null, root }, network);
+  assert.deepEqual(signed, [0]);
+  const result = finalizeOrExport(tx);
+  assert.equal(result.finalized, true, result.error);
+});
+
 test('finalizeOrExport falls back to a partial PSBT when a required signature is missing', () => {
   const network = btcNetwork(true);
   const privateKey = randomBytes(32);

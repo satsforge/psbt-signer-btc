@@ -24,7 +24,11 @@ export function decodePsbt(text) {
   for (const encoding of encodings) {
     try {
       const bytes = encoding === 'hex' ? hex.decode(trimmed) : base64.decode(trimmed);
-      return btc.Transaction.fromPSBT(bytes, { allowUnknown: true });
+      // allowUnknownInputs: a PSBT may carry a taproot script-path input
+      // whose leaf isn't one of this library's recognized templates (e.g.
+      // Inheritance Vault BTC's CSV-timelock leaf) - without this, finalize()
+      // would throw even after a correct signature was already produced.
+      return btc.Transaction.fromPSBT(bytes, { allowUnknown: true, allowUnknownInputs: true });
     } catch (err) {
       lastError = err;
     }
@@ -133,6 +137,22 @@ export function identifySigners(tx, { candidateMap, root }) {
         if (!deriv || deriv.fingerprint !== root.fingerprint) continue;
         const candidate = deriveByPathArray(root, deriv.path);
         if (hex.encode(candidate.publicKey) === scriptHexOf(pubkey)) {
+          node = candidate;
+          break;
+        }
+      }
+    }
+    // Taproot's own derivation field (BIP174 tapBip32Derivation) carries
+    // x-only (32-byte) pubkeys, separate from the legacy bip32Derivation
+    // field above - needed for any taproot input whose output key is tweaked
+    // by a script tree (e.g. Inheritance Vault BTC), since those can never
+    // be found by brute-force script matching: candidateMap only knows how
+    // to compute plain key-path-only p2tr scripts.
+    if (!node && root && input.tapBip32Derivation) {
+      for (const [xOnlyPubkey, deriv] of input.tapBip32Derivation) {
+        if (!deriv || deriv.der.fingerprint !== root.fingerprint) continue;
+        const candidate = deriveByPathArray(root, deriv.der.path);
+        if (hex.encode(candidate.publicKey.slice(1, 33)) === scriptHexOf(xOnlyPubkey)) {
           node = candidate;
           break;
         }
