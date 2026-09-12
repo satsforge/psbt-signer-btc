@@ -29,10 +29,14 @@ async function main() {
   const cssCode = cssResult.code.trim();
 
   const scriptHash = sha256b64(scriptCode);
+  const styleHash = sha256b64(cssCode);
   const csp = [
     "default-src 'none'",
     `script-src 'sha256-${scriptHash}'`,
-    "style-src 'unsafe-inline'",
+    // A hash instead of 'unsafe-inline': the app never sets inline style
+    // attributes or injects <style> at runtime, so there's no reason to
+    // allow arbitrary inline styles - only this exact, known stylesheet.
+    `style-src 'sha256-${styleHash}'`,
     "img-src 'self' data:",
     "font-src 'self'",
     // Unlike my-wallet-btc, this tool only ever signs - it never checks a
@@ -56,6 +60,7 @@ async function main() {
 
   console.log(`Built index.html (${(html.length / 1024).toFixed(1)} KiB)`);
   console.log(`script-src hash: sha256-${scriptHash}`);
+  console.log(`style-src hash: sha256-${styleHash}`);
 }
 
 main().catch((err) => {

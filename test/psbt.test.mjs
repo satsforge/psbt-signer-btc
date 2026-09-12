@@ -6,12 +6,12 @@ import { hex } from '@scure/base';
 import { randomBytes } from '@noble/hashes/utils.js';
 import {
   accountFromSeed, rootFromSeed, deriveNode, keyNodeFromPrivateKey,
-  RECEIVE_CHAIN, CHANGE_CHAIN, btcNetwork,
+  RECEIVE_CHAIN, CHANGE_CHAIN, btcNetwork, wipeNode,
 } from '../src/lib/hdwallet.js';
 import { deriveFixedTypeNode } from '../src/lib/addresstypes.js';
 import {
   buildSeedCandidateMap, buildImportedKeyMap, identifySigners, applySignatures, finalizeOrExport,
-  describePsbt, decodePsbt, encodePsbt,
+  describePsbt, decodePsbt, encodePsbt, hasNetworkMismatch,
 } from '../src/lib/psbt.js';
 
 function signAll(tx, opts, network) {
@@ -98,7 +98,7 @@ test('signs via bip32Derivation metadata for a path outside the brute-force rang
   });
   tx.addOutputAddress(externalAddress(network), 55_000n, network);
 
-  const signed = signAll(tx, { candidateMap: new Map(), root }, network);
+  const signed = signAll(tx, { candidateMap: new Map(), root, isTestnet: true }, network);
   assert.deepEqual(signed, [0]);
   const result = finalizeOrExport(tx);
   assert.equal(result.finalized, true);
@@ -153,7 +153,7 @@ test('signs a taproot script-path input via tapBip32Derivation, for a leaf scrip
   });
   tx.addOutputAddress(externalAddress(network), 98_000n, network);
 
-  const signed = signAll(tx, { candidateMap: null, root }, network);
+  const signed = signAll(tx, { candidateMap: null, root, isTestnet: true }, network);
   assert.deepEqual(signed, [0]);
   const result = finalizeOrExport(tx);
   assert.equal(result.finalized, true, result.error);
@@ -205,4 +205,281 @@ test('decodePsbt/encodePsbt round-trips through both base64 and hex', () => {
 test('decodePsbt rejects garbage input with a clear error', () => {
   assert.throws(() => decodePsbt('not a real psbt'), /No se pudo decodificar/);
   assert.throws(() => decodePsbt(''), /Peg/);
+});
+
+test('describePsbt flags an input whose amount is only claimed via witnessUtxo, not verified', () => {
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const account = accountFromSeed(seed.slice(), true);
+  const node = deriveNode(account, RECEIVE_CHAIN, 4);
+  const script = btc.p2wpkh(node.publicKey, network).script;
+
+  // No nonWitnessUtxo attached - a malicious coordinator can claim any
+  // amount here and nothing verifies it, unlike the funding-tx-backed
+  // inputs the other tests use.
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: new Uint8Array(32).fill(9), index: 0, witnessUtxo: { amount: 60_000n, script } });
+  tx.addOutputAddress(externalAddress(network), 50_000n, network);
+
+  const candidateMap = buildSeedCandidateMap({ account, seed, isTestnet: true, range: 10 });
+  const summary = describePsbt(tx, candidateMap, network);
+  assert.equal(summary.unverifiedAmountInputs, 1);
+  assert.equal(summary.missingInputs, 0);
+  assert.equal(summary.feeWarning, true);
+});
+
+test('describePsbt does not flag an input backed by a hash-verified nonWitnessUtxo', () => {
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const account = accountFromSeed(seed.slice(), true);
+  const node = deriveNode(account, RECEIVE_CHAIN, 4);
+  const script = btc.p2wpkh(node.publicKey, network).script;
+  const funding = buildFundingTx(script, 100_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.addOutputAddress(externalAddress(network), 99_000n, network);
+
+  const candidateMap = buildSeedCandidateMap({ account, seed, isTestnet: true, range: 10 });
+  const summary = describePsbt(tx, candidateMap, network);
+  assert.equal(summary.unverifiedAmountInputs, 0);
+  assert.equal(summary.missingInputs, 0);
+  assert.equal(summary.feeWarning, false);
+});
+
+test('describePsbt flags an anomalously high fee even when every amount is verified', () => {
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const account = accountFromSeed(seed.slice(), true);
+  const node = deriveNode(account, RECEIVE_CHAIN, 4);
+  const script = btc.p2wpkh(node.publicKey, network).script;
+  const funding = buildFundingTx(script, 100_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.addOutputAddress(externalAddress(network), 50_000n, network); // 50% "fee"
+
+  const candidateMap = buildSeedCandidateMap({ account, seed, isTestnet: true, range: 10 });
+  const summary = describePsbt(tx, candidateMap, network);
+  assert.equal(summary.unverifiedAmountInputs, 0);
+  assert.equal(summary.missingInputs, 0);
+  assert.equal(summary.feeWarning, true);
+});
+
+test('describePsbt flags an input missing any prevout data at all, distinctly from witnessUtxo-only', () => {
+  // Regression for M1: an input with neither witnessUtxo nor
+  // nonWitnessUtxo silently contributed 0 to inputsTotal, which could make
+  // the shown fee wildly wrong (even negative) with no explanation. It
+  // should be counted separately from (and be at least as alarming as) the
+  // witnessUtxo-only case.
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const account = accountFromSeed(seed.slice(), true);
+  const node = deriveNode(account, RECEIVE_CHAIN, 4);
+  const script = btc.p2wpkh(node.publicKey, network).script;
+  const funding = buildFundingTx(script, 100_000n);
+
+  const tx = new btc.Transaction({ allowUnknownInputs: true });
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.addInput({ txid: new Uint8Array(32).fill(5), index: 0 }); // no prevout data at all
+  tx.addOutputAddress(externalAddress(network), 500_000n, network);
+
+  const candidateMap = buildSeedCandidateMap({ account, seed, isTestnet: true, range: 10 });
+  const summary = describePsbt(tx, candidateMap, network);
+  assert.equal(summary.missingInputs, 1);
+  assert.equal(summary.unverifiedAmountInputs, 0);
+  assert.equal(summary.feeWarning, true);
+  // The missing input contributes nothing, so the shown total only reflects
+  // the one verified input - understated relative to the real (unknown) total.
+  assert.equal(summary.inputsTotal, 100_000n);
+});
+
+test('identifySigners refuses a bip32Derivation path whose coin type belongs to the other network', () => {
+  // Regression for a network-confusion bug: a PSBT can name our own root
+  // fingerprint on a mainnet-convention path (coin type 0') while the app
+  // is unlocked in testnet mode. Signing it anyway would let a
+  // mislabeled/malicious PSBT get a real mainnet signature out of a user
+  // who believes they're only operating on testnet.
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true); // app is in testnet mode
+  const root = rootFromSeed(seed.slice());
+  const mainnetNode = root.derive("m/84'/0'/0'/0/0"); // but PSBT path is mainnet (coin type 0')
+  const script = btc.p2wpkh(mainnetNode.publicKey, network).script;
+  const funding = buildFundingTx(script, 50_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.updateInput(0, {
+    bip32Derivation: [[mainnetNode.publicKey, { fingerprint: root.fingerprint, path: btc.bip32Path("m/84'/0'/0'/0/0") }]],
+  });
+  tx.addOutputAddress(externalAddress(network), 49_000n, network);
+
+  const matches = identifySigners(tx, { candidateMap: null, root, isTestnet: true });
+  assert.deepEqual(matches, []);
+  assert.equal(hasNetworkMismatch(tx, root, true), true);
+});
+
+test('applySignatures wipes a bip32Derivation-matched node right after signing (no type => ephemeral)', () => {
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const root = rootFromSeed(seed.slice());
+  const account = accountFromSeed(seed.slice(), true);
+  const farNode = deriveNode(account, RECEIVE_CHAIN, 500);
+  const farScript = btc.p2wpkh(farNode.publicKey, network).script;
+  const funding = buildFundingTx(farScript, 60_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.updateInput(0, {
+    bip32Derivation: [[farNode.publicKey, { fingerprint: root.fingerprint, path: btc.bip32Path("m/84'/1'/0'/0/500") }]],
+  });
+  tx.addOutputAddress(externalAddress(network), 55_000n, network);
+
+  const matches = identifySigners(tx, { candidateMap: new Map(), root, isTestnet: true });
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].type, null); // bip32Derivation match, not brute-force
+  applySignatures(tx, matches, network);
+  assert.equal(matches[0].node.privateKey, null, 'ephemeral node should be wiped right after signing');
+});
+
+test('wiping every candidateMap node and the account (what lockAll now does) actually zeroes their private keys', () => {
+  // Regression for the memory-hygiene gap: HDKey.privateKey and
+  // keyNodeFromPrivateKey's getter both hand back a *copy*, so the
+  // fill(0) callers used to do on that copy scrubbed nothing real. This
+  // reproduces the original finding - sign one input, then wipe the way
+  // lockAll() does, and confirm the source key material is actually gone.
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const account = accountFromSeed(seed.slice(), true);
+  const usedNode = deriveNode(account, RECEIVE_CHAIN, 3);
+  const usedScript = btc.p2wpkh(usedNode.publicKey, network).script;
+  const funding = buildFundingTx(usedScript, 100_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.addOutputAddress(externalAddress(network), 99_000n, network);
+
+  const candidateMap = buildSeedCandidateMap({ account, seed, isTestnet: true, range: 10 });
+  const matches = identifySigners(tx, { candidateMap, root: null, isTestnet: true });
+  applySignatures(tx, matches, network);
+
+  const unusedScript = btc.p2wpkh(deriveNode(account, RECEIVE_CHAIN, 8).publicKey, network).script;
+
+  wipeNode(account);
+  for (const { node } of candidateMap.values()) wipeNode(node);
+
+  const usedHit = candidateMap.get(hex.encode(usedScript));
+  const unusedHit = candidateMap.get(hex.encode(unusedScript));
+  assert.equal(usedHit.node.privateKey, null);
+  assert.equal(unusedHit.node.privateKey, null);
+  assert.equal(account.privateKey, null);
+});
+
+test('hasNetworkMismatch is false when every bip32Derivation path matches the selected network', () => {
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const root = rootFromSeed(seed.slice());
+  const node = root.derive("m/84'/1'/0'/0/0");
+  const script = btc.p2wpkh(node.publicKey, network).script;
+  const funding = buildFundingTx(script, 50_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.updateInput(0, {
+    bip32Derivation: [[node.publicKey, { fingerprint: root.fingerprint, path: btc.bip32Path("m/84'/1'/0'/0/0") }]],
+  });
+  tx.addOutputAddress(externalAddress(network), 49_000n, network);
+
+  assert.equal(hasNetworkMismatch(tx, root, true), false);
+  const matches = identifySigners(tx, { candidateMap: null, root, isTestnet: true });
+  assert.deepEqual(matches, [{ index: 0, node, type: null }]);
+});
+
+test('identifySigners refuses a bip32Derivation entry whose declared pubkey does not match the real prevout script', () => {
+  // Regression for M2: the PSBT can be internally self-consistent (our
+  // root really does derive that pubkey at that path) while the input's
+  // actual prevout script pays somewhere else entirely. Before this check,
+  // identifySigners still reported it as "ours to sign", so the review
+  // screen promised a signature that would only fail later.
+  const seed = mnemonicToSeedSync(VECTOR_MNEMONIC, '');
+  const network = btcNetwork(true);
+  const root = rootFromSeed(seed.slice());
+  const ourNode = root.derive("m/84'/1'/0'/0/0");
+  // The real prevout pays an unrelated key, not ourNode.
+  const strangerSeed = mnemonicToSeedSync(
+    'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong', '',
+  );
+  const strangerNode = rootFromSeed(strangerSeed).derive("m/84'/1'/0'/0/0");
+  const foreignScript = btc.p2wpkh(strangerNode.publicKey, network).script;
+  const funding = buildFundingTx(foreignScript, 70_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: funding.id, index: 0, nonWitnessUtxo: funding.unsignedTx });
+  tx.updateInput(0, {
+    // Names our own root/path, but for a pubkey that plainly isn't what
+    // pays this input.
+    bip32Derivation: [[ourNode.publicKey, { fingerprint: root.fingerprint, path: btc.bip32Path("m/84'/1'/0'/0/0") }]],
+  });
+  tx.addOutputAddress(externalAddress(network), 69_000n, network);
+
+  const matches = identifySigners(tx, { candidateMap: null, root, isTestnet: true });
+  assert.deepEqual(matches, []);
+});
+
+test('applySignatures returns only the indices actually signed, not an echo of what was expected', () => {
+  // Regression for M3: a match that identifySigners judged signable can
+  // still fail to sign (wrong key for that input, sighash mismatch, etc.) -
+  // the caller needs to know which ones really succeeded, not a blind copy
+  // of the matches it was given.
+  const network = btcNetwork(true);
+  const goodKey = randomBytes(32);
+  const goodNode = keyNodeFromPrivateKey(goodKey, true);
+  const goodScript = btc.p2wpkh(goodNode.publicKey, network).script;
+  const goodFunding = buildFundingTx(goodScript, 40_000n);
+
+  const wrongKey = randomBytes(32);
+  const wrongNode = keyNodeFromPrivateKey(wrongKey, true);
+  // This input actually pays a *different* key than the one in the bogus match below.
+  const realNode = keyNodeFromPrivateKey(randomBytes(32), true);
+  const realScript = btc.p2wpkh(realNode.publicKey, network).script;
+  const badFunding = buildFundingTx(realScript, 30_000n);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: goodFunding.id, index: 0, nonWitnessUtxo: goodFunding.unsignedTx });
+  tx.addInput({ txid: badFunding.id, index: 0, nonWitnessUtxo: badFunding.unsignedTx });
+  tx.addOutputAddress(externalAddress(network), 68_000n, network);
+
+  // Hand-crafted matches, as if identifySigners had (wrongly) reported both -
+  // input 1's node doesn't actually correspond to its prevout script.
+  const matches = [
+    { index: 0, node: goodNode, type: 'bech32' },
+    { index: 1, node: wrongNode, type: 'bech32' },
+  ];
+  const signed = applySignatures(tx, matches, network);
+  assert.deepEqual(signed, [0]); // only the genuinely-signable one
+  assert.equal(tx.getInput(1).partialSig, undefined);
+});
+
+test('applySignatures does not let one failing match abort signing for the others', () => {
+  // Regression for the "throws mid-way" minor finding: a broken match used
+  // to abort the whole call, leaving every other already-reviewed match
+  // unsigned even though nothing was wrong with it. The broken match is
+  // listed *first* here specifically to prove a later, valid match still
+  // gets processed.
+  const network = btcNetwork(true);
+  const goodNode = keyNodeFromPrivateKey(randomBytes(32), true);
+  const goodScript = btc.p2wpkh(goodNode.publicKey, network).script;
+  const goodFunding = buildFundingTx(goodScript, 40_000n);
+  const brokenNode = keyNodeFromPrivateKey(randomBytes(32), true);
+
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: goodFunding.id, index: 0, nonWitnessUtxo: goodFunding.unsignedTx });
+  tx.addOutputAddress(externalAddress(network), 39_000n, network);
+
+  const matches = [
+    { index: 99, node: brokenNode, type: 'p2sh' }, // out-of-range index - annotation must throw
+    { index: 0, node: goodNode, type: 'bech32' }, // perfectly valid, listed second on purpose
+  ];
+  const signed = applySignatures(tx, matches, network);
+  assert.deepEqual(signed, [0]);
 });

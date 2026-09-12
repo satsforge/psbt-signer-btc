@@ -57,3 +57,14 @@ export function keyNodeFromPrivateKey(privateKey, compressed = true) {
     wipe() { raw.fill(0); },
   };
 }
+
+// Both node shapes this app hands around - a real HDKey (from `.derive()`/
+// `.deriveChild()`) and the ad-hoc object from `keyNodeFromPrivateKey` -
+// hand back a *fresh copy* from their `.privateKey` getter, so zeroing that
+// copy (as callers do right after signing) never touches the source. This
+// reaches the source instead, whichever shape `node` is.
+export function wipeNode(node) {
+  if (!node) return;
+  if (typeof node.wipePrivateData === 'function') node.wipePrivateData();
+  else if (typeof node.wipe === 'function') node.wipe();
+}

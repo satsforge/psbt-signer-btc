@@ -27,6 +27,10 @@ const dict = {
     es: '<strong>Aviso:</strong> esta herramienta firma transacciones reales de Bitcoin, pero <strong>nunca transmite nada</strong> — no hace ninguna llamada de red. Para máxima seguridad, usala en un equipo desconectado de internet. Nadie ajeno a este proyecto auditó el código todavía: leelo antes de confiarle fondos.',
     en: '<strong>Warning:</strong> this tool signs real Bitcoin transactions, but it <strong>never broadcasts anything</strong> — it makes no network calls at all. For maximum security, use it on a device disconnected from the internet. Nobody outside this project has audited the code yet: read it yourself before trusting it with funds.',
   },
+  'notice.autoLocked': {
+    es: '🔒 La sesión se bloqueó sola por inactividad. Volvé a desbloquear para seguir.',
+    en: '🔒 The session locked itself due to inactivity. Unlock again to continue.',
+  },
 
   'network.legend': { es: 'Red', en: 'Network' },
   'network.testnet.label': { es: 'Testnet (recomendado para probar)', en: 'Testnet (recommended for testing)' },
@@ -87,6 +91,10 @@ const dict = {
     es: 'Ninguna clave derivada de lo que desbloqueaste coincide con los inputs de este PSBT — no hay nada para firmar.',
     en: 'None of the keys derived from what you unlocked match this PSBT\'s inputs — nothing to sign.',
   },
+  'error.networkMismatch': {
+    es: 'Este PSBT deriva claves con tu misma semilla pero para la otra red (Testnet/Mainnet). Cambiá la red seleccionada arriba y volvé a intentar.',
+    en: 'This PSBT derives keys with your same seed but for the other network (Testnet/Mainnet). Change the network selected above and try again.',
+  },
 
   'review.title': { es: 'Revisar antes de firmar', en: 'Review before signing' },
   'review.willSign': { es: '{n} de {total} inputs se van a firmar con esta clave', en: '{n} of {total} inputs will be signed with this key' },
@@ -99,6 +107,22 @@ const dict = {
   'review.confirm': {
     es: 'Revisé el destino y los montos, y quiero firmar esta transacción con la clave que desbloqueé.',
     en: 'I reviewed the destination and amounts, and I want to sign this transaction with the key I unlocked.',
+  },
+  'review.missingAmounts': {
+    es: '{n} de {total} entradas no declaran ningún monto (ni siquiera un witnessUtxo) — se cuentan como 0 en el total de entradas de arriba, así que ese total y la comisión están subestimados, no reflejan lo que en verdad se está gastando.',
+    en: '{n} of {total} inputs declare no amount at all (not even a witnessUtxo) — they count as 0 in the inputs total above, so that total and the fee are understated and don\'t reflect what\'s actually being spent.',
+  },
+  'review.unverifiedAmounts': {
+    es: '{n} de {total} entradas no traen la transacción de origen completa: su monto es lo que dice el PSBT, sin forma de verificarlo sin conexión. Un coordinador malicioso podría mentir sobre esos montos para inflar la comisión real. Los totales de arriba pueden no ser exactos.',
+    en: '{n} of {total} inputs don\'t include the full source transaction: their amount is whatever the PSBT claims, with no way to verify it offline. A malicious coordinator could lie about those amounts to inflate the real fee. The totals above may not be accurate.',
+  },
+  'review.feeTooHigh': {
+    es: 'La comisión calculada es inusualmente alta en relación al total de entradas. Revisá los montos con cuidado antes de firmar.',
+    en: 'The calculated fee is unusually high relative to the total inputs. Review the amounts carefully before signing.',
+  },
+  'review.riskAck': {
+    es: 'Entiendo el riesgo descripto arriba y quiero firmar igual.',
+    en: 'I understand the risk described above and want to sign anyway.',
   },
   'review.sign': { es: 'Firmar', en: 'Sign' },
   'review.cancel': { es: 'Cancelar', en: 'Cancel' },
@@ -113,6 +137,10 @@ const dict = {
   'result.partial.hint': {
     es: 'Esta transacción necesita más firmas (por ejemplo, un multisig). Pasále este PSBT al próximo firmante.',
     en: 'This transaction needs more signatures (for example, a multisig). Pass this PSBT to the next signer.',
+  },
+  'result.partialSignWarning': {
+    es: 'La revisión anterior indicaba que se iban a firmar {expected} input(s) con esta clave, pero sólo se pudieron firmar {signed}. Revisá el resultado con cuidado antes de usarlo.',
+    en: 'The review screen indicated {expected} input(s) would be signed with this key, but only {signed} actually were. Review the result carefully before using it.',
   },
   'result.txid': { es: 'TXID', en: 'TXID' },
   'result.hexLabel': { es: 'Transacción firmada (hex)', en: 'Signed transaction (hex)' },
