@@ -1,0 +1,14 @@
+# Normalize source files to LF in the repo and on checkout, so the same
+# input produces the same bytes on every platform.
+* text=auto eol=lf
+
+# ...but never touch the build. dist/index.html is a single self-contained
+# file whose Content-Security-Policy pins a SHA-256 hash of its own inline
+# <script>. Any line-ending conversion rewrites those bytes, the hash stops
+# matching, and the browser silently refuses to run the script - the page
+# loads blank and the tool is dead, with nothing in the UI to say why. On
+# Windows, Git's default core.autocrlf=true does exactly that conversion on
+# every clone and checkout.
+#
+# (A later, more specific pattern wins, so this overrides the rule above.)
+*.html -text
