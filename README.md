@@ -97,14 +97,57 @@ decode/encode de PSBT en base64 y hex.
 - **Revisión obligatoria antes de firmar**: el PSBT se decodifica y se
   identifica qué se puede firmar, pero la firma real (`tx.sign(...)`) no
   ocurre hasta que confirmás explícitamente el resumen en pantalla.
-- **Higiene de memoria**: la seed, la master key (`root`) y cada clave
-  privada derivada se sobrescriben con ceros inmediatamente después de
-  firmar, y también al bloquear la sesión.
+- **Alerta de montos no verificables**: sin conexión no hay forma de
+  comprobar que el monto que un input SegWit declara (`witnessUtxo`) sea
+  real — un coordinador malicioso podría mentir para inflar la comisión
+  real sin que se note. La pantalla de revisión distingue dos casos y exige
+  una segunda confirmación aparte de la habitual para cualquiera de los
+  dos: inputs que sólo traen `witnessUtxo` (monto reclamado, no verificado)
+  e inputs que no traen ningún dato de origen (ni `witnessUtxo` ni
+  `nonWitnessUtxo` — se cuentan como 0 en el total mostrado, así que ese
+  total y la comisión quedan subestimados). También se marca cualquier
+  comisión inusualmente alta en relación al total de entradas.
+- **Chequeo de red por path**: si el PSBT trae un `bip32Derivation` que
+  nombra tu misma master key pero con un path de la otra red (mainnet vs.
+  testnet), la herramienta no lo deriva ni lo firma — evita que un PSBT mal
+  etiquetado (o malicioso) te haga firmar una transacción de mainnet real
+  mientras creés estar operando en testnet.
+- **El `bip32Derivation` declarado tiene que corresponder al script real**:
+  que un input traiga metadata de derivación consistente con tu semilla
+  (fingerprint + path + pubkey que efectivamente derivan) no alcanza — la
+  herramienta además comprueba que esa clave derivada pueda gastar el
+  script real del input antes de ofrecerlo como "tuyo para firmar" en la
+  revisión, para que esa pantalla nunca prometa una firma que después la
+  firma real vaya a rechazar.
+- **La firma se verifica input por input**: no se asume que todo lo que la
+  revisión prometió terminó firmado — cada input se firma y se confirma por
+  separado, y si alguno no se pudo firmar (a pesar de haber sido
+  identificado como propio), el resultado final lo indica explícitamente en
+  vez de reportar como firmado algo que en realidad no lo está.
+- **Higiene de memoria**: la seed y la master key (`root`) se sobrescriben
+  con ceros apenas se usan para derivar. Una clave derivada por
+  `bip32Derivation` (efímera, se recalcula si hace falta de nuevo) se borra
+  apenas termina de firmar. Las ~400 claves candidatas de la búsqueda por
+  fuerza bruta y la cuenta BIP84 se mantienen mientras la sesión sigue
+  desbloqueada — así podés firmar más de un PSBT sin volver a ingresar la
+  semilla (por ejemplo, un reemplazo RBF del mismo input) — y se
+  sobrescriben con ceros recién al bloquear la sesión.
 - **Cero persistencia**: no se usa `localStorage`, `sessionStorage`, cookies
   ni IndexedDB.
 - **Sin descarga automática de portapapeles**: igual que My Wallet BTC, la
   frase semilla, el bloque cifrado, la clave privada y el PSBT se pueden
   cargar desde un archivo en vez de copiar/pegar.
+- **Auto-bloqueo por inactividad**: si desbloqueaste la herramienta y te
+  alejaste, se bloquea sola a los 10 minutos sin actividad — no depende de
+  que te acuerdes de apretar "Bloquear".
+- **Dirección completa en la revisión**: la pantalla que mostrás confirmar
+  nunca trunca una dirección de destino — un ataque de dirección parecida
+  (mismo principio/final, medio distinto) depende exactamente de que la
+  víctima vea una versión acortada.
+- **CSP sin `unsafe-inline` en ningún lado**: tanto el script como la hoja
+  de estilos se permiten por hash (`sha256-...`), no por la excepción
+  genérica `unsafe-inline` — se puede verificar en las herramientas de
+  desarrollador del navegador.
 
 ## Limitaciones conocidas
 

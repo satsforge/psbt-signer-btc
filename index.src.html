@@ -30,6 +30,7 @@
 
 <section id="screen-unlock" class="screen">
   <div class="panel">
+  <p id="unlock-autolock-notice" class="notice notice-info" hidden data-i18n="notice.autoLocked"></p>
   <div class="notice notice-warning" data-i18n="notice.warning">
     <strong>Aviso:</strong> esta herramienta firma transacciones reales de Bitcoin, pero <strong>nunca transmite nada</strong> —
     no hace ninguna llamada de red. Para máxima seguridad, usala en un equipo desconectado de internet.
@@ -168,9 +169,16 @@
   <h2 data-i18n="review.outputs">Salidas</h2>
   <ul class="output-list" id="review-outputs"></ul>
 
+  <p id="review-risk-warning" class="notice notice-warning" hidden></p>
+
   <label class="checkbox-field">
     <input type="checkbox" id="review-confirm-checkbox">
     <span data-i18n="review.confirm">Revisé el destino y los montos, y quiero firmar esta transacción con la clave que desbloqueé.</span>
+  </label>
+
+  <label class="checkbox-field" id="review-risk-ack-wrap" hidden>
+    <input type="checkbox" id="review-risk-ack-checkbox">
+    <span data-i18n="review.riskAck">Entiendo el riesgo descripto arriba y quiero firmar igual.</span>
   </label>
 
   <p id="review-error" class="error" hidden></p>
@@ -186,6 +194,7 @@
   <div class="panel">
   <h2 id="result-title" data-i18n="result.title.finalized">Transacción firmada y completa</h2>
   <p id="result-hint" class="hint" data-i18n="result.finalized.hint">Todas las firmas necesarias están presentes.</p>
+  <p id="result-partial-warning" class="notice notice-warning" hidden></p>
 
   <dl class="review-list" id="result-txid-row" hidden>
     <dt data-i18n="result.txid">TXID</dt><dd id="result-txid" class="mono"></dd>

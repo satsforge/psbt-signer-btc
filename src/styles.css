@@ -189,6 +189,7 @@ strong { color: var(--text); }
 }
 .notice-warning { background: var(--danger-bg); border: 1px solid var(--danger); color: var(--text); }
 .notice-warning strong { color: var(--danger); }
+.notice-info { background: var(--bg-panel-2); border: 1px solid var(--border); color: var(--text); }
 
 fieldset { border: 1px solid var(--border); border-radius: var(--radius); margin: 0 0 16px; padding: 14px 16px 16px; }
 legend { padding: 0 6px; color: var(--accent); font-size: 13px; font-weight: 600; }
@@ -258,7 +259,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: var(--bg-panel-2); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 0.6rem 0.8rem; margin-bottom: 0.5rem; font-size: 0.85rem;
 }
-.output-address { font-family: var(--mono); word-break: break-all; }
+.output-address { font-family: var(--mono); word-break: break-all; flex: 1 1 auto; min-width: 0; }
 .output-change-tag { color: var(--ok); font-size: 0.75rem; display: block; margin-top: 0.15rem; }
 .output-amount { white-space: nowrap; font-weight: 600; }
 

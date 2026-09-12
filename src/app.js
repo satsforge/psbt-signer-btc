@@ -1,12 +1,12 @@
 import * as btc from '@scure/btc-signer';
 import QRCode from 'qrcode';
 import { isValidMnemonic, seedFromMnemonic } from './lib/mnemonic.js';
-import { accountFromSeed, rootFromSeed, btcNetwork, keyNodeFromPrivateKey } from './lib/hdwallet.js';
+import { accountFromSeed, rootFromSeed, btcNetwork, keyNodeFromPrivateKey, wipeNode } from './lib/hdwallet.js';
 import { decryptMnemonic } from './lib/seedcipher.js';
 import { decryptBip38, isBip38 } from './lib/bip38.js';
 import {
   buildSeedCandidateMap, buildImportedKeyMap, decodePsbt,
-  identifySigners, applySignatures, finalizeOrExport, describePsbt,
+  identifySigners, applySignatures, finalizeOrExport, describePsbt, hasNetworkMismatch,
 } from './lib/psbt.js';
 import { t, DEFAULT_LANG } from './lib/i18n.js';
 
@@ -40,9 +40,13 @@ function fmtBtc(sats) {
   return btc.Decimal.encode(sats);
 }
 
+// This is the one screen where a truncated address is actively dangerous:
+// clipboard-hijacking malware and lookalike-address attacks specifically
+// rely on matching the first/last few characters while swapping the
+// middle, which a "10…8" ellipsis would hide from the one review meant to
+// catch exactly that. Always show it in full here.
 function fmtAddress(address) {
-  if (!address) return tr('review.noAddress');
-  return address.length > 20 ? `${address.slice(0, 10)}…${address.slice(-8)}` : address;
+  return address || tr('review.noAddress');
 }
 
 function setError(elId, message) {
@@ -209,6 +213,7 @@ function initUnlockScreen() {
   $('unlock-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     setError('unlock-error', null);
+    $('unlock-autolock-notice').hidden = true;
     state.isTestnet = testnetRadio.checked;
     updateNetworkBadge();
     unlockBtn.disabled = true;
@@ -256,6 +261,7 @@ function initUnlockScreen() {
         state.candidateMap = buildSeedCandidateMap({ account: state.account, seed, isTestnet: state.isTestnet });
       }
       clearUnlockInputs();
+      resetInactivityTimer();
       showScreen('load');
     } catch (err) {
       setError('unlock-error', tr('error.unlockFailed', { msg: err.message }));
@@ -293,9 +299,14 @@ function initLoadScreen() {
       setError('load-error', tr('error.decodeFailed', { msg: err.message }));
       return;
     }
-    const matches = identifySigners(tx, { candidateMap: state.candidateMap, root: state.root });
+    const matches = identifySigners(tx, {
+      candidateMap: state.candidateMap, root: state.root, isTestnet: state.isTestnet,
+    });
     if (matches.length === 0) {
-      setError('load-error', tr('error.noKeysMatched'));
+      const msg = hasNetworkMismatch(tx, state.root, state.isTestnet)
+        ? tr('error.networkMismatch')
+        : tr('error.noKeysMatched');
+      setError('load-error', msg);
       return;
     }
     state.tx = tx;
@@ -307,6 +318,23 @@ function initLoadScreen() {
 }
 
 // ---------- Review ----------
+
+// Drops the pending `identifySigners` matches, wiping the ones that would
+// otherwise leak: a match with no `type` is a fresh, single-use node
+// re-derived straight from `bip32Derivation` (see psbt.js), never cached
+// anywhere else, so if it's about to be discarded unsigned (the user
+// cancels review) this is the only chance to zero it. Matches with a
+// `type` live inside `state.candidateMap` too and may still be needed for
+// another PSBT this same unlocked session - those are left alone here and
+// wiped only at lockAll().
+function discardMatches() {
+  if (state.matches) {
+    for (const { node, type } of state.matches) {
+      if (!type) wipeNode(node);
+    }
+  }
+  state.matches = null;
+}
 
 function renderReview() {
   const { tx, matches, candidateMap } = state;
@@ -329,28 +357,62 @@ function renderReview() {
     list.appendChild(li);
   }
 
+  // Unverified amounts (SegWit inputs with no full previous transaction
+  // attached), inputs missing a prevout entirely (worse: they silently
+  // count as 0 above, understating both totals), or an anomalous fee mean
+  // the numbers above can't be fully trusted - describePsbt already
+  // computed the specific condition(s), so just build the matching
+  // message(s) and demand a second, explicit acknowledgement before
+  // signing is allowed at all.
+  const warningEl = $('review-risk-warning');
+  const ackWrap = $('review-risk-ack-wrap');
+  if (summary.feeWarning) {
+    const lines = [];
+    if (summary.missingInputs > 0) {
+      lines.push(tr('review.missingAmounts', { n: summary.missingInputs, total: tx.inputsLength }));
+    }
+    if (summary.unverifiedAmountInputs > 0) {
+      lines.push(tr('review.unverifiedAmounts', { n: summary.unverifiedAmountInputs, total: tx.inputsLength }));
+    }
+    if (lines.length === 0) lines.push(tr('review.feeTooHigh'));
+    warningEl.textContent = lines.join(' ');
+    warningEl.hidden = false;
+    ackWrap.hidden = false;
+  } else {
+    warningEl.hidden = true;
+    ackWrap.hidden = true;
+  }
+  $('review-risk-ack-checkbox').checked = false;
+
   $('review-confirm-checkbox').checked = false;
   $('confirm-sign-btn').disabled = true;
   setError('review-error', null);
 }
 
+function syncSignButton() {
+  const needsAck = !$('review-risk-ack-wrap').hidden;
+  const baseOk = $('review-confirm-checkbox').checked;
+  const ackOk = !needsAck || $('review-risk-ack-checkbox').checked;
+  $('confirm-sign-btn').disabled = !(baseOk && ackOk);
+}
+
 function initReviewScreen() {
-  $('review-confirm-checkbox').addEventListener('change', (ev) => {
-    $('confirm-sign-btn').disabled = !ev.target.checked;
-  });
+  $('review-confirm-checkbox').addEventListener('change', syncSignButton);
+  $('review-risk-ack-checkbox').addEventListener('change', syncSignButton);
   $('cancel-review-btn').addEventListener('click', () => {
     state.tx = null;
-    state.matches = null;
+    discardMatches();
     showScreen('load');
   });
   $('confirm-sign-btn').addEventListener('click', () => {
     setError('review-error', null);
     $('confirm-sign-btn').disabled = true;
     try {
-      applySignatures(state.tx, state.matches, state.network);
+      const expected = state.matches.length;
+      const signed = applySignatures(state.tx, state.matches, state.network);
       const result = finalizeOrExport(state.tx);
-      state.matches = null;
-      renderResult(result);
+      discardMatches();
+      renderResult(result, { expected, signed: signed.length });
       showScreen('result');
     } catch (err) {
       setError('review-error', tr('error.signFailed', { msg: err.message }));
@@ -361,12 +423,26 @@ function initReviewScreen() {
 
 // ---------- Result ----------
 
-async function renderResult(result) {
+async function renderResult(result, signInfo) {
   const titleEl = $('result-title');
   const hintEl = $('result-hint');
   const txidRow = $('result-txid-row');
   const outputField = $('result-output');
   const outputLabel = $('result-output-label');
+
+  // The review screen promised `expected` inputs would be signed with this
+  // key; `signed` is what applySignatures actually managed (see psbt.js -
+  // it no longer just echoes the expectation back). A shortfall here means
+  // something the review screen showed didn't hold up during signing -
+  // surface it plainly instead of only ever showing the generic
+  // finalized/partial framing.
+  const partialWarning = $('result-partial-warning');
+  if (signInfo && signInfo.signed < signInfo.expected) {
+    partialWarning.textContent = tr('result.partialSignWarning', signInfo);
+    partialWarning.hidden = false;
+  } else {
+    partialWarning.hidden = true;
+  }
 
   if (result.finalized) {
     titleEl.textContent = tr('result.title.finalized');
@@ -409,7 +485,7 @@ function initResultScreen() {
 
   $('result-back-btn').addEventListener('click', () => {
     state.tx = null;
-    state.matches = null;
+    discardMatches();
     $('load-error').hidden = true;
     showScreen('load');
   });
@@ -419,10 +495,24 @@ function initResultScreen() {
 
 // ---------- Lock ----------
 
-function lockAll() {
+function lockAll(opts) {
+  // Wired directly as a click handler in a couple of places, so `opts` may
+  // actually be a MouseEvent - only the inactivity timer below ever passes
+  // a real options object, and only it sets this specific shape.
+  const dueToInactivity = Boolean(opts && opts.reason === 'inactivity');
+  clearInactivityTimer();
   if (state.seed) state.seed.fill(0);
   if (state.root) state.root.wipePrivateData();
+  if (state.account) wipeNode(state.account);
+  // Every derived candidate the seed ever produced (up to ~400 BIP84
+  // addresses plus the 4 paper-wallet-btc-style fixed ones) lives here with
+  // a private key, whether or not it ever matched a PSBT input this
+  // session - wipe all of them, not just the ones that got used.
+  if (state.candidateMap) {
+    for (const { node } of state.candidateMap.values()) wipeNode(node);
+  }
   if (state.importedNode) state.importedNode.wipe();
+  discardMatches();
   state.mode = null;
   state.seed = null;
   state.root = null;
@@ -430,11 +520,51 @@ function lockAll() {
   state.importedNode = null;
   state.candidateMap = null;
   state.tx = null;
-  state.matches = null;
   state.network = null;
   $('unlock-btn').disabled = false;
   $('psbt-input').value = '';
+  $('unlock-autolock-notice').hidden = !dueToInactivity;
   showScreen('unlock');
+}
+
+// ---------- Auto-lock on inactivity ----------
+
+// A local, offline signer holding decrypted key material has no OS-level
+// screen lock of its own - if the user unlocks it and then walks away,
+// anyone at the keyboard inherits everything until they come back. 10
+// minutes matches the kind of default hardware wallets and password
+// managers use: long enough to read through a large multisig PSBT
+// carefully, short enough that a forgotten unlocked tab isn't a standing
+// risk. Only runs once something is actually unlocked (state.mode set) -
+// nothing sensitive is held before that.
+const INACTIVITY_LOCK_MS = 10 * 60 * 1000;
+let inactivityTimer = null;
+let lastActivityAt = 0;
+
+function clearInactivityTimer() {
+  if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
+}
+
+function resetInactivityTimer() {
+  clearInactivityTimer();
+  if (state.mode) {
+    inactivityTimer = setTimeout(() => lockAll({ reason: 'inactivity' }), INACTIVITY_LOCK_MS);
+  }
+}
+
+function initAutoLock() {
+  const events = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'wheel'];
+  events.forEach((evt) => {
+    window.addEventListener(evt, () => {
+      // mousemove/scroll can fire hundreds of times a second; only the
+      // timer's own duration matters for security, not this precision, so
+      // throttle the churn of clearing/re-arming a timeout on every event.
+      const now = Date.now();
+      if (now - lastActivityAt < 1000) return;
+      lastActivityAt = now;
+      resetInactivityTimer();
+    }, { passive: true });
+  });
 }
 
 // ---------- Boot ----------
@@ -445,6 +575,7 @@ function init() {
   initLoadScreen();
   initReviewScreen();
   initResultScreen();
+  initAutoLock();
   applyTranslations();
   showScreen('unlock');
 }
